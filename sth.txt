@@ -1,0 +1,11 @@
+# 更新代码后重启
+sudo docker compose up -d --build backend frontend
+
+# 备份数据库（卷）
+sudo docker compose exec db pg_dump -U cloud cloud > backup-$(date +%F).sql
+
+# 恢复
+cat backup-2026-10-27.sql | sudo docker compose exec -T db psql -U cloud cloud
+
+# 清空一切（数据也删！）
+sudo docker compose down -v

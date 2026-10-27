@@ -1,0 +1,59 @@
+name: cloud-drive
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cloud}
+      POSTGRES_USER: ${POSTGRES_USER:-cloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloud}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cloud}
+      ROOT_PASSWORD: ${ROOT_PASSWORD:?ROOT_PASSWORD is required}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-7}
+      DEFAULT_USER_QUOTA_MB: ${DEFAULT_USER_QUOTA_MB:-1024}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      PROXY_DOWNLOAD: ${PROXY_DOWNLOAD:-0}
+    # 调试时可以打开
+    # ports:
+    #   - "${BACKEND_PORT:-3000}:3000"
+    networks:
+      - internal
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    networks:
+      - internal
+
+volumes:
+  db_data:
+
+networks:
+  internal:
+    driver: bridge
