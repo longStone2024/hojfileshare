@@ -26,6 +26,31 @@ function extractToken(json, preferredPath) {
 const tokenCache = new Map();
 const inflight = new Map();
 
+function getRemoteExt(filename, mimeType) {
+  const map = {
+    'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp',
+    'application/pdf': '.pdf', 'text/plain': '.txt', 'application/zip': '.zip',
+    'application/x-zip-compressed': '.zip', 'application/x-tar': '.tar',
+  };
+  const raw = String(filename || 'unnamed').replace(/[\\/]+/g, '_');
+  const dot = raw.lastIndexOf('.');
+  const ext = dot >= 0 ? raw.slice(dot).toLowerCase() : '';
+  const disallowed = new Set(['.js', '.mjs', '.cjs', '.css', '.scss', '.less', '.html', '.htm', '.svg', '.xml', '.json', '.txt']);
+  if (typeof mimeType === 'string' && map[mimeType.toLowerCase()]) return map[mimeType.toLowerCase()];
+  if (ext && !disallowed.has(ext) && /^\.[A-Za-z0-9]{1,8}$/.test(ext)) return ext;
+  if (typeof mimeType === 'string' && mimeType.startsWith('text/')) return '.txt';
+  return '.bin';
+}
+
+function normalizeUploadFilename(filename, mimeType) {
+  const raw = String(filename || 'unnamed').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+  const clean = raw.split('/').pop().split('\\').pop() || 'unnamed';
+  const ext = getRemoteExt(clean, mimeType);
+  const stamp = Date.now().toString(36);
+  const salt = (Math.random() * 0xffffffff >>> 0).toString(36);
+  return `cloud-${stamp}-${salt}${ext}`;
+}
+
 async function loginProvider(p) {
   if (!p.upload_username || !p.upload_password) {
     throw new Error('OJ 提供方未配置上传账号');
@@ -121,4 +146,4 @@ async function fetchHomeInfo(p, username) {
   return res.json();
 }
 
-module.exports = { uploadFile, fetchHomeInfo };
+module.exports = { uploadFile, fetchHomeInfo, normalizeUploadFilename };

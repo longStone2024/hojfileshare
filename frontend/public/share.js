@@ -36,9 +36,30 @@
 
   let currentPassword = '';
 
-  async function loadInfo(password) {
-    const url = `/api/share/${encodeURIComponent(code)}` +
-      (password ? '?password=' + encodeURIComponent(password) : '');
+  function getCurrentPath() {
+    const params = new URLSearchParams(location.search || '');
+    return params.get('path') || '';
+  }
+
+  function buildSharePageUrl(path = '') {
+    const url = new URL(location.href);
+    if (currentPassword) url.searchParams.set('password', currentPassword);
+    if (path) url.searchParams.set('path', path);
+    else url.searchParams.delete('path');
+    return url.pathname + (url.search || '');
+  }
+
+  function goToPath(path) {
+    const next = buildSharePageUrl(path);
+    history.pushState({}, '', next);
+    boot();
+  }
+
+  async function loadInfo(password, path = getCurrentPath()) {
+    const params = new URLSearchParams();
+    if (password) params.set('password', password);
+    if (path) params.set('path', path);
+    const url = `/api/share/${encodeURIComponent(code)}` + (params.toString() ? `?${params.toString()}` : '');
     const res = await fetch(url);
     let data = null;
     try { data = await res.json(); } catch {}
@@ -56,6 +77,88 @@
   }
 
   function renderInfo(info) {
+    if (info.isDir) {
+      const items = Array.isArray(info.items) ? info.items : [];
+      const files = items.filter(item => !item.isDir);
+      const breadcrumb = Array.isArray(info.breadcrumb) ? info.breadcrumb : [];
+      const currentPath = info.currentPath || '';
+      const parentPath = info.parentPath || (currentPath ? currentPath.split('/').slice(0, -1).join('/') : '');
+      const pathLink = (seg, idx) => {
+        const segs = breadcrumb.slice(0, idx + 1);
+        const next = segs.join('/');
+        const params = new URLSearchParams(location.search || '');
+        params.set('path', next);
+        return `${location.pathname}?${params.toString()}`;
+      };
+      app.innerHTML = `
+        <div class="card share-card">
+          <div class="share-icon">📁</div>
+          <h2 class="share-file-name">${esc(info.name)}</h2>
+          <div class="share-meta">
+            <span>类型：<b>文件夹</b></span>
+            <span>文件数：<b>${files.length}</b></span>
+            <span>过期时间：<b>${info.expiresAt ? fmtTime(info.expiresAt) : '永久有效'}</b></span>
+            <span>剩余下载：<b>${info.remainingDownloads == null ? '不限次数' : info.remainingDownloads + ' 次'}</b></span>
+          </div>
+          <div class="row" style="justify-content:flex-start;margin:10px 0 16px;gap:12px;flex-wrap:wrap;">
+            ${currentPath ? `<button class="btn secondary" data-share-nav="${esc(parentPath || '')}">⬅ 返回上级</button>` : ''}
+            <button class="download-btn" id="downloadAllBtn">📦 当前目录打包下载</button>
+          </div>
+          <div class="share-file-list" style="display:flex;flex-direction:column;gap:8px;">
+            ${breadcrumb.length ? `<div class="hint" style="padding:6px 0;">路径：${breadcrumb.map((seg, idx) => `<a href="${pathLink(seg, idx)}" style="color:#4a7df3;">${esc(seg)}</a>`).join(' / ')}</div>` : ''}
+            ${items.length ? items.map(item => `
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid #edf2f7;border-radius:8px;background:#fafbff;">
+                <div style="min-width:0;flex:1;">
+                  <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(item.relativePath || item.name)}</div>
+                  <div class="hint" style="font-size:12px;">${item.isDir ? '文件夹' : humanSize(item.size)}</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                  ${item.isDir ? `<button class="btn secondary" data-dir-path="${esc(item.relativePath)}">打开</button>` : `<button class="btn" data-file-id="${item.id}">下载</button>`}
+                </div>
+              </div>
+            `).join('') : '<div class="hint">此目录为空</div>'}
+          </div>
+          <div class="share-footer" style="margin-top:16px;">
+            由 HOJ云盘提供分享服务 · <a href="/">访问主页</a>
+          </div>
+        </div>`;
+      const allBtn = $('#downloadAllBtn');
+      if (allBtn) {
+        allBtn.onclick = () => {
+          const params = new URLSearchParams();
+          if (currentPassword) params.set('password', currentPassword);
+          if (currentPath) params.set('path', currentPath);
+          const u = `/api/share/${encodeURIComponent(code)}/download${params.toString() ? `?${params.toString()}` : ''}`;
+          window.location.href = u;
+        };
+      }
+      app.querySelectorAll('[data-dir-path]').forEach(btn => {
+        btn.onclick = () => {
+          const raw = (btn.dataset.dirPath || '').replace(/^\/+/, '');
+          const nextPath = raw.includes('/') ? raw : ((currentPath ? `${currentPath}/` : '') + raw);
+          goToPath(nextPath);
+        };
+      });
+      app.querySelectorAll('[data-share-nav]').forEach(btn => {
+        btn.onclick = () => {
+          const nextPath = (btn.dataset.shareNav || '').trim();
+          goToPath(nextPath);
+        };
+      });
+      app.querySelectorAll('[data-file-id]').forEach(btn => {
+        btn.onclick = () => {
+          const fileId = encodeURIComponent(btn.dataset.fileId);
+          const params = new URLSearchParams();
+          params.set('fileId', fileId);
+          if (currentPassword) params.set('password', currentPassword);
+          if (currentPath) params.set('path', currentPath);
+          const u = `/api/share/${encodeURIComponent(code)}/download?${params.toString()}`;
+          window.location.href = u;
+        };
+      });
+      return;
+    }
+
     app.innerHTML = `
       <div class="card share-card">
         <div class="share-icon">📄</div>
@@ -120,9 +223,10 @@
     input.focus();
   }
 
-  (async function boot() {
+  async function boot() {
+    const curPath = getCurrentPath();
     try {
-      const { res, data } = await loadInfo();
+      const { res, data } = await loadInfo(currentPassword, curPath);
       if (res.ok && data && data.status === 200) {
         renderInfo(data.data);
         return;
@@ -135,5 +239,10 @@
     } catch (e) {
       renderError('网络错误：' + e.message);
     }
-  })();
+  }
+
+  boot();
+  window.addEventListener('popstate', () => {
+    boot();
+  });
 })();

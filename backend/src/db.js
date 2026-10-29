@@ -52,7 +52,32 @@ async function tx(fn) {
 
 async function init() {
 
+  await query(`CREATE TABLE IF NOT EXISTS site_settings (
+    id SERIAL PRIMARY KEY,
+    site_name TEXT NOT NULL DEFAULT '云盘',
+    site_description TEXT DEFAULT '',
+    site_footer TEXT DEFAULT '',
+    updated_at BIGINT NOT NULL DEFAULT 0
+  )`);
+  await query(`CREATE TABLE IF NOT EXISTS notices (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`);
   await query(`ALTER TABLE login_challenges ADD COLUMN IF NOT EXISTS desired_username TEXT`);
+  await query(`ALTER TABLE oj_providers ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS storage_provider_ids INTEGER[]`);
+  await query(`ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_provider_id INTEGER`);
+  await query(`ALTER TABLE files ADD COLUMN IF NOT EXISTS mime_type TEXT`);
+  await query(`ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_parent_id INTEGER`);
+  await query(`ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at BIGINT`);
+  await query(`ALTER TABLE files ADD COLUMN IF NOT EXISTS delete_expires_at BIGINT`);
+  await query(`UPDATE oj_providers SET sort_order = id WHERE sort_order IS NULL OR sort_order = 0`);
+  await query(`UPDATE users SET storage_provider_ids = ARRAY[oj_provider_id]
+    WHERE oj_provider_id IS NOT NULL AND storage_provider_ids IS NULL`);
   const existing = await one('SELECT id FROM users WHERE username=$1', ['root']);
   if (!existing) {
     const hash = bcrypt.hashSync(config.rootPassword, 10);

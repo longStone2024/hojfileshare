@@ -10,19 +10,21 @@ CREATE TABLE oj_providers (
   upload_username TEXT,
   upload_password TEXT,
   upload_gid      TEXT,
+  sort_order      INTEGER NOT NULL DEFAULT 0,
   enabled         BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 CREATE TABLE users (
-  id             SERIAL PRIMARY KEY,
-  username       TEXT UNIQUE NOT NULL,
-  password_hash  TEXT,
-  role           TEXT NOT NULL DEFAULT 'user',           -- 'user' / 'admin' / 'root'
-  quota_bytes    BIGINT NOT NULL DEFAULT 1073741824,
-  used_bytes     BIGINT NOT NULL DEFAULT 0,
-  oj_provider_id INTEGER REFERENCES oj_providers(id) ON DELETE SET NULL,
-  oj_username    TEXT,
-  created_at     BIGINT NOT NULL,
+  id                    SERIAL PRIMARY KEY,
+  username              TEXT UNIQUE NOT NULL,
+  password_hash         TEXT,
+  role                 TEXT NOT NULL DEFAULT 'user',           -- 'user' / 'admin' / 'root'
+  quota_bytes           BIGINT NOT NULL DEFAULT 1073741824,
+  used_bytes            BIGINT NOT NULL DEFAULT 0,
+  oj_provider_id        INTEGER REFERENCES oj_providers(id) ON DELETE SET NULL,
+  oj_username           TEXT,
+  storage_provider_ids  INTEGER[] DEFAULT NULL,
+  created_at            BIGINT NOT NULL,
   UNIQUE (oj_provider_id, oj_username)
 );
 
@@ -47,12 +49,15 @@ CREATE TABLE files (
   id                  SERIAL PRIMARY KEY,
   user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   parent_id           INTEGER NOT NULL DEFAULT 0,
+  deleted_parent_id   INTEGER,
   name                TEXT NOT NULL,
   is_dir              BOOLEAN NOT NULL DEFAULT FALSE,
   size                BIGINT NOT NULL DEFAULT 0,
   storage_url         TEXT,
   storage_provider_id INTEGER REFERENCES oj_providers(id) ON DELETE SET NULL,
   mime_type           TEXT,
+  deleted_at          BIGINT,
+  delete_expires_at   BIGINT,
   created_at          BIGINT NOT NULL,
   updated_at          BIGINT NOT NULL,
   UNIQUE (user_id, parent_id, name)
@@ -71,3 +76,20 @@ CREATE TABLE shares (
   created_at     BIGINT NOT NULL
 );
 CREATE INDEX idx_shares_user ON shares(user_id);
+
+CREATE TABLE site_settings (
+  id               SERIAL PRIMARY KEY,
+  site_name        TEXT NOT NULL DEFAULT '云盘',
+  site_description TEXT DEFAULT '',
+  site_footer      TEXT DEFAULT '',
+  updated_at       BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE notices (
+  id         SERIAL PRIMARY KEY,
+  title      TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);

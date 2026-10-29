@@ -3,7 +3,12 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 const toastEl = $('#toast');
 
+if (!app || !toastEl) {
+  throw new Error('主页面缺少 app/toast 节点');
+}
+
 function toast(msg, ms = 2200) {
+  if (!toastEl) return;
   toastEl.textContent = msg;
   toastEl.classList.add('show');
   clearTimeout(toast._t);
@@ -36,12 +41,28 @@ const state = {
   parentId: 0,
   stack: [{ id: 0, name: '根目录' }],
   needsPassword: false,
+  adminTab: 'dashboard',
+  siteSettings: null,
+  viewMode: localStorage.getItem('drive-view-mode') || 'list',
+  iconSize: localStorage.getItem('drive-icon-size') || 'medium',
 };
 
 function setToken(t) {
   state.token = t || '';
   if (t) localStorage.setItem('token', t);
   else localStorage.removeItem('token');
+}
+
+function getAllowedProviderIdsForUser(user) {
+  if (!user) return null;
+  if (user.role === 'admin' || user.role === 'root') return null;
+  if (Array.isArray(user.storageProviderIds) && user.storageProviderIds.length) {
+    return user.storageProviderIds.slice();
+  }
+  if (user.ojProviderId != null) {
+    return [user.ojProviderId];
+  }
+  return null;
 }
 
 async function api(path, opts = {}) {
@@ -72,6 +93,43 @@ function modal(html) {
   mask.innerHTML = `<div class="modal">${html}</div>`;
   document.body.appendChild(mask);
   return { mask, close: () => mask.remove() };
+}
+
+async function confirmDialog(message, options = {}) {
+  const { title = '确认操作', confirmText = '确认', cancelText = '取消' } = options;
+  return await new Promise((resolve) => {
+    const { mask, close } = modal(`
+      <h3>${esc(title)}</h3>
+      <p class="hint" style="margin:0;white-space:pre-wrap;">${esc(message)}</p>
+      <div class="actions">
+        <button class="btn secondary" id="cancelBtn">${esc(cancelText)}</button>
+        <button class="btn" id="okBtn">${esc(confirmText)}</button>
+      </div>
+    `);
+    mask.querySelector('#cancelBtn').onclick = () => { close(); resolve(false); };
+    mask.querySelector('#okBtn').onclick = () => { close(); resolve(true); };
+  });
+}
+
+async function promptDialog({ title = '输入内容', label = '内容', value = '', type = 'text' } = {}) {
+  return await new Promise((resolve) => {
+    const { mask, close } = modal(`
+      <h3>${esc(title)}</h3>
+      <div class="row" style="flex-direction:column;">
+        <label>${esc(label)}</label>
+        <input id="dialogInput" type="${type}" value="${esc(value)}" />
+      </div>
+      <div class="actions">
+        <button class="btn secondary" id="cancelBtn">取消</button>
+        <button class="btn" id="okBtn">确定</button>
+      </div>
+    `);
+    const input = mask.querySelector('#dialogInput');
+    const done = (result) => { close(); resolve(result); };
+    mask.querySelector('#cancelBtn').onclick = () => done(null);
+    mask.querySelector('#okBtn').onclick = () => done(input.value);
+    input.onkeydown = (e) => { if (e.key === 'Enter') done(input.value); };
+  });
 }
 
 // ============== 登录页 ==============
@@ -248,24 +306,102 @@ function promptSetPassword(isFirstTime) {
 // ============== 用户栏 ==============
 function renderUserBar() {
   const u = state.me;
+  const actionButtons = `
+    <div class="user-actions">
+      <button id="noticeBtn">公告</button>
+      ${state.needsPassword ? '<button id="pwBtn" style="color:#ffd700;border-color:#ffd700">设置密码</button>' : '<button id="pwBtn">改密码</button>'}
+      ${['admin', 'root'].includes(u.role) ? '<button id="adminBtn">管理</button>' : ''}
+      <button id="logoutBtn">退出</button>
+    </div>
+  `;
   $('#userbar').innerHTML = `
-    <span>${esc(u.username)} <small style="opacity:.7">(${u.role})</small></span>
-    ${state.needsPassword ? '<button id="pwBtn" style="color:#ffd700;border-color:#ffd700">设置密码</button>' : '<button id="pwBtn">改密码</button>'}
-    ${['admin', 'root'].includes(u.role) ? '<button id="adminBtn">管理</button>' : ''}
-    <button id="logoutBtn">退出</button>`;
+    <div class="user-meta">
+      <span>${esc(u.username)} <small style="opacity:.7">(${u.role})</small></span>
+    </div>
+    ${actionButtons}
+  `;
+  $('#noticeBtn').onclick = () => window.location.href = '/notice';
   $('#pwBtn').onclick = () => promptSetPassword(false);
   $('#logoutBtn').onclick = async () => {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
     setToken(''); state.me = null;
-    location.href = '/';   // 刷新回首页（登录页）
+    location.href = '/';
   };
   const ab = $('#adminBtn');
-  if (ab) ab.onclick = renderAdmin;
+  if (ab) ab.onclick = () => { window.location.href = '/admin'; };
 }
 
 function renderBreadcrumb() {
   return `<div class="breadcrumb">${state.stack.map((s, i) =>
     `<a data-idx="${i}">${esc(s.name)}</a>`).join(' / ')}</div>`;
+}
+
+function renderViewControls() {
+  return `
+    <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div class="row" style="align-items:center;gap:8px;">
+        <button class="btn secondary ${state.viewMode === 'list' ? 'active' : ''}" data-view-mode="list">列表</button>
+        <button class="btn secondary ${state.viewMode === 'tile' ? 'active' : ''}" data-view-mode="tile">平铺</button>
+      </div>
+      <div class="row" style="align-items:center;gap:8px;">
+        <label class="hint" style="margin:0;">图标大小</label>
+        <select id="iconSizeSelect" style="min-width:110px;padding:8px 10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;">
+          <option value="small" ${state.iconSize === 'small' ? 'selected' : ''}>小</option>
+          <option value="medium" ${state.iconSize === 'medium' ? 'selected' : ''}>中</option>
+          <option value="large" ${state.iconSize === 'large' ? 'selected' : ''}>大</option>
+        </select>
+      </div>
+    </div>
+  `;
+}
+
+function renderFilesList(files) {
+  return `
+    <table class="files">
+      <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
+      <tbody>
+        ${files.length ? files.map(f => `
+          <tr class="${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}">
+            <td class="name">${f.isDir ? '📁' : '📄'} ${esc(f.name)}</td>
+            <td>${f.isDir ? '-' : humanSize(f.size)}</td>
+            <td>${fmtTime(f.updatedAt)}</td>
+            <td class="actions">${f.isDir
+              ? `<button data-act="download-zip">打包下载</button><button data-act="share">分享</button>`
+              : `<button data-act="download">下载</button><button data-act="share">分享</button>`}
+              <button data-act="move">移动</button>
+              <button data-act="rename">重命名</button>
+              <button data-act="del" style="color:#e5484d;border-color:#e5484d;">删除</button>
+            </td>
+          </tr>`).join('') : `<tr><td colspan="4" class="hint" style="text-align:center;padding:24px;">空目录</td></tr>`}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderFilesTile(files) {
+  return `
+    <div class="file-grid file-grid-${state.iconSize}">
+      ${files.length ? files.map(f => `
+        <div class="file-tile ${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}">
+          <div class="file-tile-main">
+            <div class="file-tile-icon">${f.isDir ? '📁' : '📄'}</div>
+            <div class="file-tile-name">${esc(f.name)}</div>
+          </div>
+          <div class="file-tile-meta">
+            <span>${f.isDir ? '文件夹' : humanSize(f.size)}</span>
+            <span>${fmtTime(f.updatedAt)}</span>
+          </div>
+          <div class="file-tile-actions">
+            ${f.isDir ? `<button data-act="download-zip">打包</button>` : `<button data-act="download">下载</button>`}
+            <button data-act="share">分享</button>
+            <button data-act="move">移动</button>
+            <button data-act="rename">重命名</button>
+            <button data-act="del" style="color:#e5484d;border-color:#e5484d;">删除</button>
+          </div>
+        </div>
+      `).join('') : `<div class="hint" style="padding:24px;">空目录</div>`}
+    </div>
+  `;
 }
 
 function bindBreadcrumb() {
@@ -288,6 +424,11 @@ async function renderApp() {
       state.needsPassword = !!r.data.needsPassword;
     } catch { renderLogin(); return; }
   }
+  try {
+    const site = await api('/api/site');
+    const brand = $('#brand');
+    if (brand) brand.textContent = site.data.siteName || '云盘';
+  } catch {}
   renderUserBar();
   state.parentId = 0;
   state.stack = [{ id: 0, name: '根目录' }];
@@ -311,6 +452,7 @@ async function loadFiles() {
           <button class="btn" id="upBtn">上传文件</button>
           <button class="btn secondary" id="mkBtn">新建文件夹</button>
           <button class="btn secondary" id="shBtn">我的分享</button>
+          <button class="btn secondary" id="trashBtn">回收站</button>
         </div>
         <div class="hint">已用 ${humanSize(used)} / ${humanSize(quota)} (${pct.toFixed(1)}%)</div>
       </div>
@@ -327,24 +469,8 @@ async function loadFiles() {
 
     <div class="card">
       ${renderBreadcrumb()}
-      <table class="files">
-        <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
-        <tbody>
-          ${files.length ? files.map(f => `
-            <tr class="${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}">
-              <td class="name">${f.isDir ? '📁' : '📄'} ${esc(f.name)}</td>
-              <td>${f.isDir ? '-' : humanSize(f.size)}</td>
-              <td>${fmtTime(f.updatedAt)}</td>
-              <td class="actions">${f.isDir
-  ? `<button data-act="download-zip">打包下载</button>`
-  : `<button data-act="download">下载</button><button data-act="share">分享</button>`}
-                <button data-act="move">移动</button>
-                <button data-act="rename">重命名</button>
-                <button data-act="del" style="color:#e5484d;border-color:#e5484d;">删除</button>
-              </td>
-            </tr>`).join('') : `<tr><td colspan="4" class="hint" style="text-align:center;padding:24px;">空目录</td></tr>`}
-        </tbody>
-      </table>
+      ${renderViewControls()}
+      ${state.viewMode === 'tile' ? renderFilesTile(files) : renderFilesList(files)}
     </div>
 
     <div class="card" id="sharePanel" hidden></div>`;
@@ -354,70 +480,226 @@ async function loadFiles() {
 
   bindBreadcrumb();
 
-  app.querySelectorAll('tr.dir').forEach(tr => {
-    tr.querySelector('td.name').onclick = () => {
-      const id = parseInt(tr.dataset.id, 10);
-      state.stack.push({ id, name: tr.dataset.name });
-      state.parentId = id;
-      loadFiles();
-    };
+  app.querySelectorAll('[data-view-mode]').forEach(btn => {
+   btn.onclick = () => {
+     state.viewMode = btn.dataset.viewMode;
+     localStorage.setItem('drive-view-mode', state.viewMode);
+     loadFiles();
+   };
   });
 
-  app.querySelectorAll('tr[data-id]').forEach(tr => {
-    const id = parseInt(tr.dataset.id, 10);
-    const isDir = tr.dataset.dir === '1';
-    tr.querySelectorAll('button[data-act]').forEach(btn => {
-      btn.onclick = async (ev) => {
-        ev.stopPropagation();
-        const act = btn.dataset.act;
-        try {
-          if (act === 'download') {
-            window.location.href = `/api/files/${id}/download?token=${encodeURIComponent(state.token)}`;
-          } else if (act === 'download-zip') {
-  window.location.href = `/api/files/${id}/download-zip?token=${encodeURIComponent(state.token)}`;
-          } else if (act === 'rename') {
-            const name = prompt('新名称', tr.dataset.name);
-            if (!name) return;
-            await api('/api/files/' + id, { method: 'PATCH', body: { name } });
-            loadFiles();
-          } else if (act === 'move') {
-            openMoveDialog(id, tr.dataset.name, isDir);
-          } else if (act === 'del') {
-            if (!confirm(`确定删除"${tr.dataset.name}"？文件夹会一并删除。`)) return;
-            await api('/api/files/' + id, { method: 'DELETE' });
-            loadFiles();
-          } else if (act === 'share') {
-            openShareDialog(id);
-          }
-        } catch (e) { toast(e.message); }
-      };
-    });
+  const iconSizeSelect = $('#iconSizeSelect');
+  if (iconSizeSelect) {
+   iconSizeSelect.onchange = () => {
+     state.iconSize = iconSizeSelect.value;
+     localStorage.setItem('drive-icon-size', state.iconSize);
+     loadFiles();
+   };
+  }
+
+  app.querySelectorAll('.dir').forEach(el => {
+   const item = el.querySelector('.file-tile-main') || el.querySelector('td.name');
+   if (!item) return;
+   item.onclick = () => {
+     const id = parseInt(el.dataset.id, 10);
+     state.stack.push({ id, name: el.dataset.name });
+     state.parentId = id;
+     loadFiles();
+   };
   });
 
-  const fileInput = $('#fileInput');
-  $('#upBtn').onclick = () => fileInput.click();
-  fileInput.onchange = async () => {
-    if (!fileInput.files.length) return;
-    const list = Array.from(fileInput.files);
-    fileInput.value = '';
-    await uploadMultiple(list);
-    loadFiles();
-  };
+  app.querySelectorAll('[data-id]').forEach(el => {
+   const id = parseInt(el.dataset.id, 10);
+   const isDir = el.dataset.dir === '1';
+   el.querySelectorAll('button[data-act]').forEach(btn => {
+     btn.onclick = async (ev) => {
+       ev.stopPropagation();
+       const act = btn.dataset.act;
+       try {
+         if (act === 'download') {
+           window.location.href = `/api/files/${id}/download?token=${encodeURIComponent(state.token)}`;
+         } else if (act === 'download-zip') {
+           window.location.href = `/api/files/${id}/download-zip?token=${encodeURIComponent(state.token)}`;
+         } else if (act === 'rename') {
+           openRenameDialog(id, el.dataset.name);
+         } else if (act === 'move') {
+           openMoveDialog(id, el.dataset.name, isDir);
+         } else if (act === 'del') {
+           const ok = await confirmDialog(`确定移到回收站？"${el.dataset.name}"会保留 3 天且不占用空间。`, { title: '删除文件' });
+           if (!ok) return;
+           await api('/api/files/' + id, { method: 'DELETE' });
+           loadFiles();
+         } else if (act === 'share') {
+           openShareDialog(id);
+         }
+       } catch (e) { toast(e.message); }
+     };
+   });
+  });
 
-  $('#mkBtn').onclick = async () => {
-    const name = prompt('文件夹名');
-    if (!name) return;
+  $('#upBtn').onclick = () => openUploadDialog();
+
+  $('#mkBtn').onclick = () => openCreateDirDialog();
+
+  $('#shBtn').onclick = showShares;
+  $('#trashBtn').onclick = renderTrash;
+}
+
+function openCreateDirDialog() {
+  const { mask, close } = modal(`
+    <h3>新建文件夹</h3>
+    <div class="row" style="flex-direction:column;">
+      <div><label>文件夹名</label><input id="dirName" type="text" /></div>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="cancel">取消</button>
+      <button class="btn" id="ok">创建</button>
+    </div>
+  `);
+  mask.querySelector('#cancel').onclick = close;
+  mask.querySelector('#ok').onclick = async () => {
+    const name = mask.querySelector('#dirName').value.trim();
+    if (!name) return toast('文件夹名不能为空');
     try {
       await api('/api/files/mkdir', { method: 'POST', body: { parentId: state.parentId, name } });
+      close();
       loadFiles();
     } catch (e) { toast(e.message); }
   };
+}
 
-  $('#shBtn').onclick = showShares;
+function openRenameDialog(fileId, currentName) {
+  const { mask, close } = modal(`
+    <h3>重命名</h3>
+    <div class="row" style="flex-direction:column;">
+      <div><label>新名称</label><input id="newName" type="text" value="${esc(currentName)}" /></div>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="cancel">取消</button>
+      <button class="btn" id="ok">保存</button>
+    </div>
+  `);
+  mask.querySelector('#cancel').onclick = close;
+  mask.querySelector('#ok').onclick = async () => {
+    const name = mask.querySelector('#newName').value.trim();
+    if (!name) return toast('名称不能为空');
+    try {
+      await api('/api/files/' + fileId, { method: 'PATCH', body: { name } });
+      close();
+      loadFiles();
+    } catch (e) { toast(e.message); }
+  };
 }
 
 // ============== 上传（带进度） ==============
-function uploadOne(file, parentId, onProgress) {
+async function openUploadDialog() {
+  const providerList = await api('/api/auth/providers');
+  const allowedIds = getAllowedProviderIdsForUser(state.me);
+  const providerOptions = providerList.data.providers.filter(p => !allowedIds || allowedIds.includes(p.id));
+  if (!providerOptions.length) {
+    toast('当前用户没有可用上传渠道');
+    return;
+  }
+
+  const { mask, close } = modal(`
+    <h3>上传文件</h3>
+    <div style="margin-bottom:12px;">
+      <p class="hint" style="margin:0 0 8px;">上传渠道：</p>
+      <select id="uploadProviderSelect" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:8px;">
+        ${providerOptions.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="margin-bottom:12px;">
+      <p class="hint" style="margin:0 0 8px;">将上传到：</p>
+      <div id="uploadTargetBrowser"></div>
+    </div>
+    <div style="margin-bottom:12px;">
+      <p class="hint" style="margin:0 0 8px;">待上传文件：</p>
+      <div id="uploadSelectedFiles" class="hint">未选择文件</div>
+      <input id="uploadDialogInput" type="file" hidden multiple />
+      <div class="actions" style="justify-content:flex-start; margin-top:8px;">
+        <button class="btn secondary" id="pickUploadFiles">选择文件</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="cancel">取消</button>
+      <button class="btn" id="confirmUpload">开始上传</button>
+    </div>
+  `);
+
+  const providerSelect = mask.querySelector('#uploadProviderSelect');
+  if (providerOptions.length === 1) {
+    providerSelect.disabled = true;
+  }
+
+  let currentPid = state.parentId;
+  const stack = [{ id: 0, name: '根目录' }];
+  let selectedFiles = [];
+
+  function renderSelectedFiles() {
+    const el = mask.querySelector('#uploadSelectedFiles');
+    if (!selectedFiles.length) {
+      el.textContent = '未选择文件';
+      return;
+    }
+    el.innerHTML = selectedFiles.map(f => `<div>${esc(f.name)} (${humanSize(f.size)})</div>`).join('');
+  }
+
+  async function renderBrowser() {
+    const el = mask.querySelector('#uploadTargetBrowser');
+    try {
+      const r = await api('/api/files?parentId=' + currentPid);
+      const dirs = r.data.files.filter(f => f.isDir);
+      el.innerHTML = `
+        <div class="breadcrumb">${stack.map((s, i) => `<a data-idx="${i}">${esc(s.name)}</a>`).join(' / ')}</div>
+        <div class="move-list">
+          ${dirs.length ? dirs.map(d => `<div class="move-dir" data-id="${d.id}" data-name="${esc(d.name)}">📁 ${esc(d.name)}</div>`).join('') : '<p class="hint" style="padding:8px;">（无子文件夹）</p>'}
+        </div>
+      `;
+      el.querySelectorAll('.breadcrumb a').forEach(a => {
+        a.onclick = () => {
+          const idx = parseInt(a.dataset.idx, 10);
+          stack.splice(idx + 1);
+          currentPid = stack[stack.length - 1].id;
+          renderBrowser();
+        };
+      });
+      el.querySelectorAll('.move-dir').forEach(d => {
+        d.onclick = () => {
+          currentPid = parseInt(d.dataset.id, 10);
+          stack.push({ id: currentPid, name: d.dataset.name });
+          renderBrowser();
+        };
+      });
+    } catch (e) {
+      el.innerHTML = `<p class="hint">加载目标目录失败：${esc(e.message)}</p>`;
+    }
+  }
+
+  const fileInput = mask.querySelector('#uploadDialogInput');
+  mask.querySelector('#pickUploadFiles').onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    selectedFiles = Array.from(fileInput.files || []);
+    renderSelectedFiles();
+  };
+
+  await renderBrowser();
+  renderSelectedFiles();
+  mask.querySelector('#cancel').onclick = close;
+  mask.querySelector('#confirmUpload').onclick = async () => {
+    try {
+      if (!selectedFiles.length) return toast('请选择文件');
+      const providerId = Number.parseInt(providerSelect.value, 10);
+      await uploadMultiple(selectedFiles, currentPid, providerId);
+      close();
+      loadFiles();
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+}
+
+function uploadOne(file, parentId, providerId, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/files/upload');
@@ -442,15 +724,19 @@ function uploadOne(file, parentId, onProgress) {
 
     const fd = new FormData();
     fd.append('parentId', String(parentId));
+    if (providerId != null && Number.isFinite(providerId)) {
+      fd.append('providerId', String(providerId));
+    }
     fd.append('file', file);
     xhr.send(fd);
   });
 }
 
-async function uploadMultiple(files) {
+async function uploadMultiple(files, parentId = state.parentId, providerId = null) {
   const panel = $('#uploadProgress');
   const list = $('#uploadList');
   panel.hidden = false;
+  list.innerHTML = '';
 
   const items = files.map((f, idx) => {
     const id = 'upl_' + idx + '_' + Date.now();
@@ -469,7 +755,7 @@ async function uploadMultiple(files) {
     const pct  = item.div.querySelector('.upload-pct');
     try {
       pct.textContent = '0%';
-      await uploadOne(item.file, state.parentId, (loaded, total) => {
+      await uploadOne(item.file, parentId, providerId, (loaded, total) => {
         const p = Math.min(100, (loaded / total) * 100);
         fill.style.width = p.toFixed(1) + '%';
         pct.textContent = p.toFixed(0) + '%';
@@ -484,12 +770,6 @@ async function uploadMultiple(files) {
     }
   }
 
-  // 全部完成后 2s 自动隐藏
-  setTimeout(() => {
-    if (list.querySelectorAll('.upload-item').length) {
-      // 保持显示，等用户下次上传时清空
-    }
-  }, 100);
   setTimeout(() => {
     panel.hidden = true;
     list.innerHTML = '';
@@ -616,7 +896,8 @@ async function showShares() {
     </table>` : `<p class="hint">还没有分享。</p>`}`;
   panel.querySelectorAll('button[data-code]').forEach(b => {
     b.onclick = async () => {
-      if (!confirm('取消分享？')) return;
+      const ok = await confirmDialog('取消分享？', { title: '取消分享' });
+      if (!ok) return;
       try {
         await api('/api/shares/' + b.dataset.code, { method: 'DELETE' });
         showShares();
@@ -625,34 +906,143 @@ async function showShares() {
   });
 }
 
-// ============== 管理页面 ==============
-async function renderAdmin() {
-  if (!['admin', 'root'].includes(state.me.role)) return;
-  app.innerHTML = `<div class="card"><p class="hint">加载中…</p></div>`;
+async function renderTrash() {
   try {
-    const [providers, users, stats] = await Promise.all([
-      api('/api/admin/providers').catch(() => ({ data: { providers: [] } })),
-      api('/api/admin/users').catch(() => ({ data: { users: [] } })),
-      api('/api/admin/stats').catch(() => ({ data: {} })),
-    ]);
+    const r = await api('/api/files/trash');
+    const items = r.data.items || [];
     app.innerHTML = `
       <div class="card">
         <div class="row" style="justify-content:space-between;align-items:center;">
-          <h2>管理后台</h2>
-          <button class="btn secondary" id="back">返回云盘</button>
+          <h2>回收站</h2>
+          <button class="btn secondary" id="backFromTrash">返回云盘</button>
         </div>
-        <p class="hint">用户 ${stats.data.users} · 文件 ${stats.data.files} · 分享 ${stats.data.shares} · 已用 ${humanSize(stats.data.usedBytes)}</p>
+        <p class="hint">已删除文件会保留 3 天，且不计入存储空间。</p>
       </div>
+      <div class="card">
+        ${items.length ? `<table class="files">
+          <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>删除时间</th><th>保留到</th><th></th></tr></thead>
+          <tbody>${items.map(item => `
+            <tr>
+              <td>${esc(item.name)}</td>
+              <td>${item.isDir ? '文件夹' : '文件'}</td>
+              <td>${item.isDir ? '-' : humanSize(item.size)}</td>
+              <td>${fmtTime(item.deletedAt)}</td>
+              <td>${item.expiresAt ? fmtTime(item.expiresAt) : '—'}</td>
+              <td class="actions">
+                <button data-trash-restore="${item.id}">恢复</button>
+                <button data-trash-delete="${item.id}" style="color:#e5484d;border-color:#e5484d;">彻底删除</button>
+              </td>
+            </tr>`).join('')}</tbody>
+        </table>` : `<p class="hint">回收站为空。</p>`}
+      </div>
+    `;
+    $('#backFromTrash').onclick = loadFiles;
+    app.querySelectorAll('[data-trash-restore]').forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          await api('/api/files/' + btn.dataset.trashRestore + '/restore', { method: 'POST' });
+          toast('已恢复');
+          renderTrash();
+        } catch (e) { toast(e.message); }
+      };
+    });
+    app.querySelectorAll('[data-trash-delete]').forEach(btn => {
+      btn.onclick = async () => {
+        const ok = await confirmDialog('确认彻底删除？这将无法恢复。', { title: '彻底删除' });
+        if (!ok) return;
+        try {
+          await api('/api/files/' + btn.dataset.trashDelete + '?permanent=1', { method: 'DELETE' });
+          toast('已彻底删除');
+          renderTrash();
+        } catch (e) { toast(e.message); }
+      };
+    });
+  } catch (e) {
+    app.innerHTML = `<div class="card"><p class="hint">加载回收站失败：${esc(e.message)}</p></div>`;
+  }
+}
 
+async function renderAdmin(tabName = state.adminTab || 'dashboard') {
+  if (!['admin', 'root'].includes(state.me.role)) return;
+  state.adminTab = tabName;
+  app.innerHTML = `<div class="card"><p class="hint">加载中…</p></div>`;
+  try {
+    const [providers, users, stats, site] = await Promise.all([
+      api('/api/admin/providers').catch(() => ({ data: { providers: [] } })),
+      api('/api/admin/users').catch(() => ({ data: { users: [] } })),
+      api('/api/admin/stats').catch(() => ({ data: {} })),
+      api('/api/admin/site').catch(() => ({ data: { siteName: '云盘', siteDescription: '', siteFooter: '' } })),
+    ]);
+    state.siteSettings = site.data;
+
+    const tabs = [
+      { key: 'dashboard', label: '仪表盘' },
+      { key: 'users', label: '用户管理' },
+      { key: 'providers', label: '云盘核心（OJ列表）' },
+      { key: 'site', label: '网站管理' },
+    ];
+
+    const renderDashboard = () => `
+      <div class="card">
+        <h2>仪表盘</h2>
+        <div class="row">
+          <div class="stat-box"><strong>${stats.data.users ?? 0}</strong><span>用户</span></div>
+          <div class="stat-box"><strong>${stats.data.files ?? 0}</strong><span>文件</span></div>
+          <div class="stat-box"><strong>${stats.data.shares ?? 0}</strong><span>分享</span></div>
+          <div class="stat-box"><strong>${humanSize(stats.data.usedBytes ?? 0)}</strong><span>已用</span></div>
+        </div>
+      </div>
+    `;
+
+    const renderUsers = () => `
+      <div class="card">
+        <h2>用户</h2>
+        <table class="files">
+          <thead><tr><th>#</th><th>用户名</th><th>角色</th><th>配额/已用</th><th>OJ</th><th>存储渠道</th><th>密码</th><th></th></tr></thead>
+          <tbody>${users.data.users.map(u => `
+            <tr><td>${u.id}</td><td>${esc(u.username)}</td><td>${u.role}</td>
+            <td>${humanSize(u.used)} / ${humanSize(u.quota)}</td>
+            <td>${u.ojProviderId ? 'p' + u.ojProviderId + ' ' + esc(u.ojUsername || '') : '-'}</td>
+            <td>${u.storageProviderIds && u.storageProviderIds.length ? u.storageProviderIds.join(', ') : (u.ojProviderId ? '默认:' + u.ojProviderId : '未设定')}</td>
+            <td>${u.hasPassword ? '✅' : '❌'}</td>
+            <td class="actions">
+              <button data-quota="${u.id}">改配额</button>
+              <button data-pw="${u.id}">改密码</button>
+              ${state.me.role === 'root' && u.id !== state.me.id ? `<button data-del-user="${u.id}" style="color:#e5484d;">删除</button>` : ''}
+              <button data-channel="${u.id}">存储渠道</button>
+            </td></tr>`).join('')}
+          </tbody>
+        </table>
+        <div class="row" style="margin-top:12px; flex-direction:column;">
+          <h3 style="margin:0;">新建本地账号</h3>
+          <div class="row">
+            <div><label>用户名</label><input id="uName" type="text"/></div>
+            <div><label>密码</label><input id="uPass" type="text"/></div>
+            <div><label>配额(MB)</label><input id="uQuota" type="number" value="1024"/></div>
+            <div><label>角色</label><input id="uRole" type="text" value="user" placeholder="user/admin"/></div>
+          </div>
+          <div>
+            <label>可用存储渠道（可选，管理员创建用户可指定）</label>
+            <select id="uProviders" multiple size="6" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d0d5dd;">
+              ${providers.data.providers.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('') || '<option value="">无</option>'}
+            </select>
+          </div>
+          <div><button class="btn" id="uAdd">创建</button></div>
+        </div>
+      </div>
+    `;
+
+    const renderProviders = () => `
       <div class="card">
         <h2>OJ 存储提供方</h2>
-        <table class="files">
-          <thead><tr><th>#</th><th>名称</th><th>Base</th><th>gid</th><th>启用</th><th></th></tr></thead>
-          <tbody>${providers.data.providers.map(p => `
-            <tr><td>${p.id}</td><td>${esc(p.name)}</td>
+        <table class="files" id="providerTable">
+          <thead><tr><th>#</th><th>名称</th><th>Base</th><th>gid</th><th>启用</th><th>排序</th><th></th></tr></thead>
+          <tbody>${providers.data.providers.map((p, idx) => `
+            <tr data-provider-id="${p.id}"><td>${p.id}</td><td>${esc(p.name)}</td>
             <td>${esc(p.base_url)}</td>
             <td>${esc(p.upload_gid || '-')}</td>
             <td>${p.enabled ? '✅' : '❌'}</td>
+            <td>${idx + 1}</td>
             <td class="actions"><button data-del-provider="${p.id}">删除</button></td>
             </tr>`).join('')}
           </tbody>
@@ -671,76 +1061,130 @@ async function renderAdmin() {
           <div><button class="btn" id="pAdd">创建</button></div>
         </div>
       </div>
+    `;
 
+    const renderSite = () => `
       <div class="card">
-        <h2>用户</h2>
-        <table class="files">
-          <thead><tr><th>#</th><th>用户名</th><th>角色</th><th>配额/已用</th><th>OJ</th><th>密码</th><th></th></tr></thead>
-          <tbody>${users.data.users.map(u => `
-            <tr><td>${u.id}</td><td>${esc(u.username)}</td><td>${u.role}</td>
-            <td>${humanSize(u.used)} / ${humanSize(u.quota)}</td>
-            <td>${u.ojProviderId ? 'p' + u.ojProviderId + ' ' + esc(u.ojUsername || '') : '-'}</td>
-            <td>${u.hasPassword ? '✅' : '❌'}</td>
-            <td class="actions">
-              <button data-quota="${u.id}">改配额</button>
-              <button data-pw="${u.id}">改密码</button>
-              ${state.me.role === 'root' && u.id !== state.me.id ? `<button data-del-user="${u.id}" style="color:#e5484d;">删除</button>` : ''}
-            </td></tr>`).join('')}
-          </tbody>
-        </table>
-        <div class="row" style="margin-top:12px; flex-direction:column;">
-          <h3 style="margin:0;">新建本地账号</h3>
-          <div class="row">
-            <div><label>用户名</label><input id="uName" type="text"/></div>
-            <div><label>密码</label><input id="uPass" type="text"/></div>
-            <div><label>配额(MB)</label><input id="uQuota" type="number" value="1024"/></div>
-            <div><label>角色</label><input id="uRole" type="text" value="user" placeholder="user/admin"/></div>
-          </div>
-          <div><button class="btn" id="uAdd">创建</button></div>
+        <h2>网站管理</h2>
+        <div class="row" style="flex-direction:column;">
+          <div><label>站点名称</label><input id="siteName" type="text" value="${esc(state.siteSettings.siteName || '云盘')}"/></div>
+          <div><label>站点描述</label><textarea id="siteDescription" rows="3" style="width:100%;padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;">${esc(state.siteSettings.siteDescription || '')}</textarea></div>
+          <div><label>页脚/版权</label><textarea id="siteFooter" rows="3" style="width:100%;padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;">${esc(state.siteSettings.siteFooter || '')}</textarea></div>
+          <div><button class="btn" id="siteSave">保存网站信息</button></div>
         </div>
-      </div>`;
+      </div>
+    `;
 
-    $('#back').onclick = renderApp;
+    app.innerHTML = `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2>管理后台</h2>
+          <button class="btn secondary" id="back">返回云盘</button>
+        </div>
+        <div class="tabs" style="margin-top:12px;">
+          ${tabs.map(t => `<button class="${t.key === tabName ? 'active' : ''}" data-admin-tab="${t.key}">${t.label}</button>`).join('')}
+        </div>
+        <p class="hint">用户 ${stats.data.users ?? 0} · 文件 ${stats.data.files ?? 0} · 分享 ${stats.data.shares ?? 0} · 已用 ${humanSize(stats.data.usedBytes ?? 0)}</p>
+      </div>
+      ${tabName === 'dashboard' ? renderDashboard() : ''}
+      ${tabName === 'users' ? renderUsers() : ''}
+      ${tabName === 'providers' ? renderProviders() : ''}
+      ${tabName === 'site' ? renderSite() : ''}
+    `;
+
+    const back = $('#back');
+    if (back) back.onclick = renderApp;
+    app.querySelectorAll('[data-admin-tab]').forEach(btn => {
+      btn.onclick = () => renderAdmin(btn.dataset.adminTab);
+    });
+
+    if (tabName === 'providers') {
+      const rows = [...app.querySelectorAll('#providerTable tbody tr')];
+      rows.forEach((row) => {
+        row.draggable = true;
+        row.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', row.dataset.providerId);
+        });
+        row.addEventListener('dragover', (e) => e.preventDefault());
+        row.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          const fromId = Number.parseInt(e.dataTransfer.getData('text/plain'), 10);
+          const toId = Number.parseInt(row.dataset.providerId, 10);
+          if (!fromId || !toId || fromId === toId) return;
+          const order = rows.map(r => Number.parseInt(r.dataset.providerId, 10)).filter(v => !Number.isNaN(v));
+          const moving = order.splice(order.indexOf(fromId), 1)[0];
+          const targetIndex = order.indexOf(toId);
+          order.splice(targetIndex + 1, 0, moving);
+          try {
+            await api('/api/admin/providers/reorder', { method: 'POST', body: { order } });
+            renderAdmin('providers');
+          } catch (err) { toast(err.message); }
+        });
+      });
+    }
+
+    if (tabName === 'site') {
+      const siteSave = $('#siteSave');
+      if (siteSave) {
+        siteSave.onclick = async () => {
+          try {
+            await api('/api/admin/site', {
+              method: 'PATCH',
+              body: {
+                siteName: $('#siteName').value,
+                siteDescription: $('#siteDescription').value,
+                siteFooter: $('#siteFooter').value,
+              }
+            });
+            toast('已保存');
+          } catch (e) { toast(e.message); }
+        };
+      }
+    }
 
     app.querySelectorAll('button[data-del-provider]').forEach(b => {
       b.onclick = async () => {
-        if (!confirm('删除该 OJ 提供方？')) return;
+        const ok = await confirmDialog('删除该 OJ 提供方？', { title: '删除 OJ 提供方' });
+        if (!ok) return;
         try {
           await api('/api/admin/providers/' + b.dataset.delProvider, { method: 'DELETE' });
-          renderAdmin();
+          renderAdmin('providers');
         } catch (e) { toast(e.message); }
       };
     });
-    $('#pAdd').onclick = async () => {
-      try {
-        await api('/api/admin/providers', {
-          method: 'POST',
-          body: {
-            name: $('#pName').value,
-            base_url: $('#pBase').value,
-            upload_username: $('#pUser').value,
-            upload_password: $('#pPass').value,
-            upload_gid: $('#pGid').value,
-          },
-        });
-        renderAdmin();
-      } catch (e) { toast(e.message); }
-    };
+    const pAdd = $('#pAdd');
+    if (pAdd) {
+      pAdd.onclick = async () => {
+        try {
+          await api('/api/admin/providers', {
+            method: 'POST',
+            body: {
+              name: $('#pName').value,
+              base_url: $('#pBase').value,
+              upload_username: $('#pUser').value,
+              upload_password: $('#pPass').value,
+              upload_gid: $('#pGid').value,
+            },
+          });
+          renderAdmin('providers');
+        } catch (e) { toast(e.message); }
+      };
+    }
 
     app.querySelectorAll('button[data-quota]').forEach(b => {
       b.onclick = async () => {
-        const mb = prompt('新的配额(MB)：');
-        if (!mb) return;
+        const mb = await promptDialog({ title: '修改配额', label: '新的配额(MB)', type: 'number' });
+        if (mb == null || mb === '') return;
         try {
           await api('/api/admin/users/' + b.dataset.quota, { method: 'PATCH', body: { quotaMB: parseInt(mb, 10) } });
-          toast('已更新'); renderAdmin();
+          toast('已更新'); renderAdmin('users');
         } catch (e) { toast(e.message); }
       };
     });
     app.querySelectorAll('button[data-pw]').forEach(b => {
       b.onclick = async () => {
-        const pw = prompt('新密码：');
-        if (!pw) return;
+        const pw = await promptDialog({ title: '修改密码', label: '新密码', type: 'password' });
+        if (pw == null || pw === '') return;
         try {
           await api('/api/admin/users/' + b.dataset.pw, { method: 'PATCH', body: { password: pw } });
           toast('已更新');
@@ -749,27 +1193,72 @@ async function renderAdmin() {
     });
     app.querySelectorAll('button[data-del-user]').forEach(b => {
       b.onclick = async () => {
-        if (!confirm('删除该用户及其所有文件？')) return;
+        const ok = await confirmDialog('删除该用户及其所有文件？', { title: '删除用户' });
+        if (!ok) return;
         try {
           await api('/api/admin/users/' + b.dataset.delUser, { method: 'DELETE' });
-          renderAdmin();
+          renderAdmin('users');
         } catch (e) { toast(e.message); }
       };
     });
-    $('#uAdd').onclick = async () => {
-      try {
-        await api('/api/admin/users', {
-          method: 'POST',
-          body: {
-            username: $('#uName').value,
-            password: $('#uPass').value,
-            quotaMB: parseInt($('#uQuota').value, 10),
-            role: $('#uRole').value,
-          },
-        });
-        renderAdmin();
-      } catch (e) { toast(e.message); }
-    };
+    app.querySelectorAll('button[data-channel]').forEach(b => {
+      b.onclick = async () => {
+        const userId = Number.parseInt(b.dataset.channel, 10);
+        const user = users.data.users.find(u => u.id === userId);
+        const selects = providers.data.providers.map(p => `<option value="${p.id}" ${user && user.storageProviderIds && user.storageProviderIds.includes(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+        const allowAny = user && (user.role === 'admin' || user.role === 'root' || !user.ojProviderId);
+        const current = user && user.storageProviderIds ? user.storageProviderIds.join(',') : (user && user.ojProviderId ? String(user.ojProviderId) : '');
+        const { mask, close } = modal(`
+          <h3>修改存储渠道</h3>
+          <p class="hint">${allowAny ? '管理员/未绑定 OJ 用户可选择任意一个或留空为全部默认。普通用户只能绑定注册 OJ。' : '普通用户只能使用自己注册用的 OJ。'}</p>
+          <div class="row" style="flex-direction:column;">
+            <label>可用存储渠道</label>
+            <select id="channelSelect" multiple size="8" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d0d5dd;">
+              ${selects || '<option value="">无</option>'}
+            </select>
+          </div>
+          <div class="actions">
+            <button class="btn secondary" id="c">取消</button>
+            <button class="btn" id="ok">保存</button>
+          </div>`);
+        mask.querySelector('#c').onclick = close;
+        mask.querySelector('#ok').onclick = async () => {
+          try {
+            const selected = [...mask.querySelectorAll('#channelSelect option:checked')].map(o => Number.parseInt(o.value, 10)).filter(v => Number.isInteger(v) && v > 0);
+            if (!allowAny && user && user.ojProviderId && !(selected.length === 1 && selected[0] === user.ojProviderId)) {
+              throw new Error('普通用户只能使用其注册用的 OJ');
+            }
+            if (!allowAny && user && !user.ojProviderId && selected.length > 1) {
+              throw new Error('普通用户最多只能使用 1 种存储渠道');
+            }
+            await api('/api/admin/users/' + userId, { method: 'PATCH', body: { storageProviderIds: selected } });
+            toast('已保存');
+            close();
+            renderAdmin('users');
+          } catch (e) { toast(e.message); }
+        };
+      };
+    });
+    const uAdd = $('#uAdd');
+    if (uAdd) {
+      uAdd.onclick = async () => {
+        try {
+          const providerSelect = $('#uProviders');
+          const selected = providerSelect ? [...providerSelect.selectedOptions].map(o => Number.parseInt(o.value, 10)).filter(v => Number.isInteger(v) && v > 0) : [];
+          await api('/api/admin/users', {
+            method: 'POST',
+            body: {
+              username: $('#uName').value,
+              password: $('#uPass').value,
+              quotaMB: parseInt($('#uQuota').value, 10),
+              role: $('#uRole').value,
+              storageProviderIds: selected,
+            },
+          });
+          renderAdmin('users');
+        } catch (e) { toast(e.message); }
+      };
+    }
   } catch (e) {
     app.innerHTML = `<div class="card"><p class="hint">加载失败：${esc(e.message)}</p></div>`;
   }

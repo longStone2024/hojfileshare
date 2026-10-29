@@ -2,8 +2,13 @@
 body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f5f6fa; color: #222; }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: #2a3547; color: #fff; }
 .brand { font-weight: 600; }
-.userbar { display: flex; gap: 12px; align-items: center; font-size: 14px; }
+.userbar { display: flex; gap: 12px; align-items: center; justify-content: flex-end; font-size: 14px; }
+.user-meta { display: flex; align-items: center; color: #fff; }
+.user-actions { display: flex; gap: 8px; align-items: center; }
 .userbar button { background: transparent; border: 1px solid #7c8aa3; color: #fff; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.stat-box { flex: 1; min-width: 120px; background: #f4f7ff; border: 1px solid #dfe7ff; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 4px; }
+.stat-box strong { font-size: 28px; }
+.stat-box span { color: #5b6477; font-size: 12px; }
 .container { max-width: 960px; margin: 20px auto; padding: 0 16px; }
 
 .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
@@ -12,9 +17,10 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 h1, h2 { margin-top: 0; }
 
 label { display: block; margin-bottom: 6px; font-size: 14px; color: #555; }
-input[type=text], input[type=password], input[type=number], input[type=search] {
+input[type=text], input[type=password], input[type=number], input[type=search], textarea {
   width: 100%; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px;
 }
+textarea { resize: vertical; min-height: 80px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .row > * { flex: 1; }
 button.btn { background: #4a7df3; color: #fff; border: none; padding: 9px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
@@ -31,6 +37,32 @@ table.files th, table.files td { padding: 10px 8px; text-align: left; border-bot
 table.files tr.dir td.name { cursor: pointer; color: #2a57c9; }
 table.files td.actions { text-align: right; white-space: nowrap; }
 table.files td.actions button { background: transparent; border: 1px solid #d0d5dd; border-radius: 6px; padding: 2px 8px; cursor: pointer; margin-left: 4px; font-size: 12px; }
+
+.file-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+.file-grid-small { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.file-grid-large { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.file-tile {
+  border: 1px solid #edf0f5; border-radius: 12px; background: #fbfcff; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.file-tile.dir { cursor: pointer; }
+.file-tile-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.file-tile-icon { font-size: 32px; line-height: 1; }
+.file-grid-small .file-tile-icon { font-size: 26px; }
+.file-grid-large .file-tile-icon { font-size: 40px; }
+.file-tile-name {
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #1f2937;
+}
+.file-tile-meta {
+  display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #667085;
+}
+.file-tile-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.file-tile-actions button { background: transparent; border: 1px solid #d0d5dd; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
 
 .breadcrumb { font-size: 14px; margin-bottom: 12px; color: #555; }
 .breadcrumb a { color: #2a57c9; text-decoration: none; cursor: pointer; }
@@ -66,3 +98,8 @@ table.files td.actions button { background: transparent; border: 1px solid #d0d5
 .move-list { max-height: 300px; overflow-y: auto; border: 1px solid #eef0f4; border-radius: 8px; padding: 6px; margin-top: 8px; }
 .move-dir { padding: 8px 10px; cursor: pointer; border-radius: 6px; font-size: 14px; }
 .move-dir:hover { background: #eef2fb; color: #2a57c9; }
+
+.notice-list { display: grid; gap: 12px; }
+.notice-item { background: #f8faff; border: 1px solid #e7edf8; border-radius: 10px; padding: 14px 16px; }
+.notice-item-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.notice-body { white-space: pre-wrap; line-height: 1.7; color: #334155; margin-top: 8px; }

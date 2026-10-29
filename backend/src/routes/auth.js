@@ -22,6 +22,9 @@ const safeUser = (u) => ({
   id: u.id, username: u.username, role: u.role,
   quota: u.quota_bytes, used: u.used_bytes,
   ojProviderId: u.oj_provider_id, ojUsername: u.oj_username,
+  storageProviderIds: Array.isArray(u.storage_provider_ids)
+    ? u.storage_provider_ids
+    : (u.storage_provider_ids != null ? [u.storage_provider_ids] : (u.oj_provider_id != null ? [u.oj_provider_id] : null)),
   hasPassword: !!u.password_hash,
 });
 
@@ -84,7 +87,7 @@ router.get('/check-username', async (req, res, next) => {
 // ===== OJ 列表 =====
 router.get('/providers', async (_req, res, next) => {
   try {
-    const rows = await many('SELECT id,name,base_url FROM oj_providers WHERE enabled=TRUE ORDER BY id');
+    const rows = await many('SELECT id,name,base_url FROM oj_providers WHERE enabled=TRUE ORDER BY sort_order, id');
     res.json({ status: 200, data: { providers: rows.map(r => ({ id: r.id, name: r.name, baseUrl: r.base_url })) } });
   } catch (e) { next(e); }
 });
@@ -191,9 +194,9 @@ router.post('/oj/verify', async (req, res, next) => {
         });
       }
       const r = await query(
-        `INSERT INTO users (username, password_hash, role, quota_bytes, used_bytes, oj_provider_id, oj_username, created_at)
-         VALUES ($1, NULL, 'user', $2, 0, $3, $4, $5) RETURNING *`,
-        [username, config.defaultQuotaBytes, p.id, ch.oj_username, Date.now()]
+        `INSERT INTO users (username, password_hash, role, quota_bytes, used_bytes, oj_provider_id, oj_username, storage_provider_ids, created_at)
+         VALUES ($1, NULL, 'user', $2, 0, $3, $4, $5, $6) RETURNING *`,
+        [username, config.defaultQuotaBytes, p.id, ch.oj_username, [p.id], Date.now()]
       );
       user = r.rows[0];
       needsPassword = true;
