@@ -38,6 +38,51 @@ table.files tr.dir td.name { cursor: pointer; color: #2a57c9; }
 table.files td.actions { text-align: right; white-space: nowrap; }
 table.files td.actions button { background: transparent; border: 1px solid #d0d5dd; border-radius: 6px; padding: 2px 8px; cursor: pointer; margin-left: 4px; font-size: 12px; }
 
+.file-action-wrap { position: relative; display: inline-flex; align-items: center; }
+.more-action {
+  width: 30px; height: 30px; border-radius: 999px; border: 1px solid #d0d5dd; background: #fff;
+  color: #2a3547; font-size: 18px; line-height: 1; cursor: pointer; padding: 0;
+}
+.action-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 10; display: flex; flex-direction: column;
+  gap: 6px; min-width: 120px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(15,23,42,0.12); padding: 8px; text-align: left;
+}
+.action-menu[hidden] { display: none; }
+.action-menu button {
+  background: transparent; border: 1px solid #d0d5dd; border-radius: 6px; padding: 6px 8px; cursor: pointer;
+  font-size: 12px; color: #2a3547; text-align: left;
+}
+.action-menu .danger-action { color: #e5484d; border-color: #e5484d; }
+.file-tile-actions .file-action-wrap { width: 100%; justify-content: flex-end; }
+.file-tile-actions .action-menu { right: 0; }
+
+.preview-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px;
+}
+.preview-body {
+  max-height: 70vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 12px; background: #fafbff; padding: 12px;
+}
+.preview-code {
+  margin: 0; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.6; overflow: auto;
+}
+.preview-code code {
+  white-space: pre-wrap; word-break: break-word; font-family: inherit;
+}
+.preview-image {
+  display: block; max-width: 100%; max-height: 70vh; object-fit: contain; margin: 0 auto; border-radius: 10px; background: #fff;
+}
+.preview-iframe {
+  width: min(100%, 1000px); height: 70vh; border: 0; border-radius: 10px; background: #fff;
+}
+.preview-empty {
+  padding: 20px; text-align: center; color: #475569; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 10px;
+}
+.hl-keyword { color: #7dd3fc; }
+.hl-string { color: #86efac; }
+.hl-number { color: #f9a8d4; }
+.hl-comment { color: #94a3b8; }
+
 .file-grid {
   display: grid;
   gap: 12px;

@@ -11,6 +11,18 @@ function normalizeToken(v) {
   return s || null;
 }
 
+function ojHeaders(baseUrl, extra = {}) {
+  const origin = baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl.replace(/\/+$/, '') : 'https://localhost';
+  return {
+    Accept: 'application/json, text/plain, */*',
+    'Content-Type': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    Origin: origin,
+    Referer: origin + '/',
+    ...extra,
+  };
+}
+
 function extractToken(json, preferredPath) {
   if (preferredPath) {
     const v = normalizeToken(getPath(json, preferredPath));
@@ -58,7 +70,7 @@ async function loginProvider(p) {
   const base = p.base_url.replace(/\/+$/, '');
   const res = await fetch(base + p.login_path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: ojHeaders(base),
     body: JSON.stringify({ username: p.upload_username, password: p.upload_password }),
   });
   const text = await res.text();
@@ -71,20 +83,30 @@ async function loginProvider(p) {
   );
   if (headerAuth) return headerAuth;
 
+  if (!res.ok) {
+    const htmlSnippet = text.replace(/\s+/g, ' ').slice(0, 220);
+    throw new Error(
+      `OJ 登录失败：HTTP ${res.status} ${res.statusText}。` +
+      `请确认 base_url 和 login_path 是否正确，且该 OJ 允许此类后端登录请求。` +
+      `响应片段：${htmlSnippet || '(空)'}`
+    );
+  }
+
   // 2) 回退：JSON 里的 token 字段（兼容其他 OJ）
   let json;
   try {
     json = JSON.parse(text);
   } catch {
     throw new Error(
-      'OJ 登录失败：响应头无 Authorization，且 body 不是 JSON。片段：' + text.slice(0, 200)
+      'OJ 登录失败：响应头无 Authorization，且 body 不是 JSON。片段：' + text.slice(0, 200).
+        replace(/\s+/g, ' ')
     );
   }
   const token = extractToken(json, p.token_json_path);
   if (token) return token;
 
   throw new Error(
-    'OJ 登录失败：响应头与 JSON 均未找到 token。片段：' + text.slice(0, 300)
+    'OJ 登录失败：响应头与 JSON 均未找到 token。片段：' + text.slice(0, 300).replace(/\s+/g, ' ')
   );
 }
 
@@ -110,7 +132,13 @@ async function doUpload(p, buffer, filename, mimeType) {
 
   const res = await fetch(base + p.upload_path, {
     method: 'POST',
-    headers: { authorization: token },
+    headers: {
+      authorization: token,
+      Accept: 'application/json, text/plain, */*',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      Origin: base,
+      Referer: base + '/',
+    },
     body: fd,
   });
   const text = await res.text();
@@ -141,7 +169,9 @@ async function uploadFile(p, buffer, filename, mimeType) {
 async function fetchHomeInfo(p, username) {
   const base = p.base_url.replace(/\/+$/, '');
   const url = base + p.home_info_path + '?username=' + encodeURIComponent(username);
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
+  const res = await fetch(url, {
+    headers: ojHeaders(base, { Accept: 'application/json, text/plain, */*' }),
+  });
   if (!res.ok) throw new Error('获取主页信息失败 HTTP ' + res.status);
   return res.json();
 }

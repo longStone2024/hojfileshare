@@ -7,6 +7,14 @@ if (!app || !toastEl) {
   throw new Error('主页面缺少 app/toast 节点');
 }
 
+document.addEventListener('click', (ev) => {
+  const target = ev.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest('.more-action')) return;
+  if (target.closest('.action-menu')) return;
+  document.querySelectorAll('.action-menu').forEach(m => m.hidden = true);
+});
+
 function toast(msg, ms = 2200) {
   if (!toastEl) return;
   toastEl.textContent = msg;
@@ -355,23 +363,164 @@ function renderViewControls() {
   `;
 }
 
+function getPreviewType(file) {
+  if (!file || file.isDir) return null;
+  const name = String(file.name || '').toLowerCase();
+  const mime = String(file.mimeType || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (name.endsWith('.md') || name.endsWith('.markdown')) return 'markdown';
+  if (mime.startsWith('text/') || [
+    '.txt', '.json', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.css', '.scss', '.less',
+    '.html', '.htm', '.xml', '.yaml', '.yml', '.ini', '.toml', '.csv', '.log', '.sh', '.bash',
+    '.zsh', '.py', '.java', '.c', '.cc', '.cpp', '.h', '.hpp', '.cs', '.go', '.rs', '.sql',
+    '.php', '.vue', '.svelte', '.diff', '.patch'
+  ].some(ext => name.endsWith(ext))) {
+    return 'text';
+  }
+  return null;
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderInlineMarkdown(text) {
+  let html = escapeHtml(text);
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  return html;
+}
+
+function renderMarkdownHtml(markdown) {
+  const lines = String(markdown || '').split(/\r?\n/);
+  let html = '';
+  let inCode = false;
+  let codeLines = [];
+  const flushCode = () => {
+    if (!inCode) return;
+    html += `<pre class="preview-code"><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`;
+    codeLines = [];
+    inCode = false;
+  };
+
+  for (const raw of lines) {
+    if (/^```/.test(raw)) {
+      if (inCode) flushCode();
+      else { inCode = true; }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(raw);
+      continue;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      html += '<br>';
+      continue;
+    }
+    if (/^#{1,6}\s+/.test(raw)) {
+      const level = raw.match(/^#+/)[0].length;
+      const text = raw.replace(/^#+\s+/, '');
+      html += `<h${level}>${renderInlineMarkdown(text)}</h${level}>`;
+      continue;
+    }
+    if (/^>\s+/.test(raw)) {
+      html += `<blockquote>${renderInlineMarkdown(raw.replace(/^>\s+/, ''))}</blockquote>`;
+      continue;
+    }
+    if (/^[-*+]\s+/.test(raw)) {
+      html += `<ul><li>${renderInlineMarkdown(trimmed.replace(/^[-*+]\s+/, ''))}</li></ul>`;
+      continue;
+    }
+    html += `<p>${renderInlineMarkdown(raw)}</p>`;
+  }
+  if (inCode) flushCode();
+  return html;
+}
+
+function renderHighlightedCode(text) {
+  let html = escapeHtml(text || '');
+  html = html.replace(/(&(?:quot|#39);.*?&(?:quot|#39;)|`[^`]*`|"(?:\\.|[^\"])*"|'(?:\\.|[^'])*')/g, '<span class="hl-string">$1</span>');
+  html = html.replace(/\b(const|let|var|function|return|if|else|for|while|switch|case|break|continue|import|from|export|default|async|await|new|try|catch|throw|class|extends|interface|implements|true|false|null|undefined|typeof|in|of)\b/g, '<span class="hl-keyword">$1</span>');
+  html = html.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="hl-number">$1</span>');
+  html = html.replace(/(\/\/.*$|#.*$|\/\*[\s\S]*?\*\/)/gm, '<span class="hl-comment">$1</span>');
+  return html;
+}
+
+async function openPreviewDialog(file) {
+  const previewType = getPreviewType(file);
+  if (!previewType) { toast('该文件类型暂不支持预览'); return; }
+  const previewUrl = `/api/files/${file.id}/preview?token=${encodeURIComponent(state.token)}`;
+  const { mask, close } = modal(`
+    <div class="preview-header">
+      <h3 style="margin:0;">预览：${esc(file.name)}</h3>
+      <button class="btn secondary" id="previewClose">关闭</button>
+    </div>
+    <div id="previewBody" class="preview-body"></div>
+  `);
+
+  const body = mask.querySelector('#previewBody');
+  const setError = (msg) => {
+    body.innerHTML = `<div class="preview-empty">${esc(msg)}</div>`;
+  };
+
+  try {
+    if (previewType === 'image') {
+      body.innerHTML = `<img src="${previewUrl}" alt="${esc(file.name)}" class="preview-image" />`;
+      mask.querySelector('#previewClose').onclick = close;
+      return;
+    }
+    const res = await fetch(previewUrl, { headers: { authorization: state.token } });
+    if (!res.ok) throw new Error('无法读取文件内容');
+    if (previewType === 'pdf') {
+      body.innerHTML = `<iframe src="${previewUrl}" title="${esc(file.name)}" class="preview-iframe"></iframe>`;
+      mask.querySelector('#previewClose').onclick = close;
+      return;
+    }
+    const text = await res.text();
+    if (previewType === 'markdown') {
+      body.innerHTML = renderMarkdownHtml(text);
+    } else {
+      body.innerHTML = `<pre class="preview-code"><code>${renderHighlightedCode(text)}</code></pre>`;
+    }
+    mask.querySelector('#previewClose').onclick = close;
+  } catch (e) {
+    setError(`预览失败：${esc(e.message)}`);
+    mask.querySelector('#previewClose').onclick = close;
+  }
+}
+
+function renderActionMenu(f) {
+  const isDir = !!f.isDir;
+  return `
+    <div class="file-action-wrap">
+      <button class="more-action" data-more-id="${f.id}" aria-label="更多操作">⋮</button>
+      <div class="action-menu" data-menu-id="${f.id}" hidden>
+        ${isDir ? `<button data-act="download-zip">打包下载</button>` : `<button data-act="download">下载</button>`}
+        ${!isDir ? `<button data-act="preview">预览</button>` : ''}
+        <button data-act="share">分享</button>
+        <button data-act="move">移动</button>
+        <button data-act="rename">重命名</button>
+        <button data-act="del" class="danger-action">删除</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderFilesList(files) {
   return `
     <table class="files">
       <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
       <tbody>
         ${files.length ? files.map(f => `
-          <tr class="${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}">
+          <tr class="${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}" data-mime-type="${esc(f.mimeType || '')}">
             <td class="name">${f.isDir ? '📁' : '📄'} ${esc(f.name)}</td>
             <td>${f.isDir ? '-' : humanSize(f.size)}</td>
             <td>${fmtTime(f.updatedAt)}</td>
-            <td class="actions">${f.isDir
-              ? `<button data-act="download-zip">打包下载</button><button data-act="share">分享</button>`
-              : `<button data-act="download">下载</button><button data-act="share">分享</button>`}
-              <button data-act="move">移动</button>
-              <button data-act="rename">重命名</button>
-              <button data-act="del" style="color:#e5484d;border-color:#e5484d;">删除</button>
-            </td>
+            <td class="actions">${renderActionMenu(f)}</td>
           </tr>`).join('') : `<tr><td colspan="4" class="hint" style="text-align:center;padding:24px;">空目录</td></tr>`}
       </tbody>
     </table>
@@ -382,7 +531,7 @@ function renderFilesTile(files) {
   return `
     <div class="file-grid file-grid-${state.iconSize}">
       ${files.length ? files.map(f => `
-        <div class="file-tile ${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}">
+        <div class="file-tile ${f.isDir ? 'dir' : ''}" data-id="${f.id}" data-dir="${f.isDir ? 1 : 0}" data-name="${esc(f.name)}" data-mime-type="${esc(f.mimeType || '')}">
           <div class="file-tile-main">
             <div class="file-tile-icon">${f.isDir ? '📁' : '📄'}</div>
             <div class="file-tile-name">${esc(f.name)}</div>
@@ -391,13 +540,7 @@ function renderFilesTile(files) {
             <span>${f.isDir ? '文件夹' : humanSize(f.size)}</span>
             <span>${fmtTime(f.updatedAt)}</span>
           </div>
-          <div class="file-tile-actions">
-            ${f.isDir ? `<button data-act="download-zip">打包</button>` : `<button data-act="download">下载</button>`}
-            <button data-act="share">分享</button>
-            <button data-act="move">移动</button>
-            <button data-act="rename">重命名</button>
-            <button data-act="del" style="color:#e5484d;border-color:#e5484d;">删除</button>
-          </div>
+          <div class="file-tile-actions">${renderActionMenu(f)}</div>
         </div>
       `).join('') : `<div class="hint" style="padding:24px;">空目录</div>`}
     </div>
@@ -513,6 +656,7 @@ async function loadFiles() {
    const isDir = el.dataset.dir === '1';
    el.querySelectorAll('button[data-act]').forEach(btn => {
      btn.onclick = async (ev) => {
+       ev.preventDefault();
        ev.stopPropagation();
        const act = btn.dataset.act;
        try {
@@ -520,6 +664,8 @@ async function loadFiles() {
            window.location.href = `/api/files/${id}/download?token=${encodeURIComponent(state.token)}`;
          } else if (act === 'download-zip') {
            window.location.href = `/api/files/${id}/download-zip?token=${encodeURIComponent(state.token)}`;
+         } else if (act === 'preview') {
+           openPreviewDialog({ id, name: el.dataset.name, isDir, mimeType: el.dataset.mimeType || '' });
          } else if (act === 'rename') {
            openRenameDialog(id, el.dataset.name);
          } else if (act === 'move') {
@@ -533,8 +679,22 @@ async function loadFiles() {
            openShareDialog(id);
          }
        } catch (e) { toast(e.message); }
+       const menu = app.querySelector('[data-menu-id="' + id + '"]');
+       if (menu) menu.hidden = true;
      };
    });
+  });
+
+  app.querySelectorAll('.more-action').forEach(btn => {
+   btn.onclick = (ev) => {
+     ev.preventDefault();
+     ev.stopPropagation();
+     const currentMenu = app.querySelector('[data-menu-id="' + btn.dataset.moreId + '"]');
+     if (!currentMenu) return;
+     const shouldOpen = currentMenu.hidden;
+     document.querySelectorAll('.action-menu').forEach(m => { m.hidden = true; });
+     currentMenu.hidden = !shouldOpen;
+   };
   });
 
   $('#upBtn').onclick = () => openUploadDialog();

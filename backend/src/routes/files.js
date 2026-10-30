@@ -525,6 +525,25 @@ router.get('/:id/download-zip', async (req, res, next) => {
     else res.end();
   }
 });
+router.get('/:id/preview', async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const file = await one('SELECT * FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL', [id, req.user.id]);
+    if (!file) return res.status(404).json({ status: 404, msg: '文件不存在' });
+    if (file.is_dir) return res.status(400).json({ status: 400, msg: '不能预览文件夹' });
+    if (!file.storage_url) return res.status(404).json({ status: 404, msg: '文件内容不存在' });
+
+    const upstream = await fetch(file.storage_url, { headers: { 'User-Agent': 'Mozilla/5.0 cloud-drive-preview' } });
+    if (!upstream.ok) return res.status(502).send('上游获取失败');
+    const contentType = file.mime_type || upstream.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    if (upstream.body) Readable.fromWeb(upstream.body).pipe(res);
+    else res.end();
+  } catch (e) { next(e); }
+});
+
 router.get('/:id/download', async (req, res, next) => {
   try {
     const id = parseInt(req.params.id, 10);
